@@ -1,6 +1,9 @@
-import express from 'express';
+import express , {Request, Response } from 'express';
 import bodyParser from 'body-parser';
+import * as jwt from 'jsonwebtoken';
+import { NextFunction } from 'connect';
 import {filterImageFromURL, deleteLocalFiles} from './util/util';
+import { config } from './config/config';
 
 (async () => {
 
@@ -13,30 +16,60 @@ import {filterImageFromURL, deleteLocalFiles} from './util/util';
   // Use the body parser middleware for post requests
   app.use(bodyParser.json());
 
-  // @TODO1 IMPLEMENT A RESTFUL ENDPOINT
-  // GET /filteredimage?image_url={{URL}}
-  // endpoint to filter an image from a public url.
-  // IT SHOULD
-  //    1
-  //    1. validate the image_url query
-  //    2. call filterImageFromURL(image_url) to filter the image
-  //    3. send the resulting file in the response
-  //    4. deletes any files on the server on finish of the response
-  // QUERY PARAMATERS
-  //    image_url: URL of a publicly accessible image
-  // RETURNS
-  //   the filtered image file [!!TIP res.sendFile(filteredpath); might be useful]
+    // endpoint to filter an image from a public url.
+  app.get('/filteredimage', 
+  requireAuth,
+  async ( req: Request, res: Response ) => {
+    try{
+      //Get image_url query param
+      const image_url = req.query.image_url;
 
-  /**************************************************************************** */
+      // check image URL is valid
+      if (!image_url) {
+        return res.status(400).send({ message: 'image_url is required' });
+      }
 
-  //! END @TODO1
+      //Filter Image from the URL using util method
+      await filterImageFromURL(image_url)
+        .then((outputImage) => {
+          //Send filtered image as the response
+          res.status(200).sendFile(outputImage, {}, (err) => {
+            //After the image is sent, the file is removed from the server
+            var values: Array<string> = [outputImage];
+            deleteLocalFiles(values);
+          })
+        })
+    } catch (e) {
+      return res.status(422).send({ message: 'There was an error: ' + e.getMessage() });
+    }
+});
   
   // Root Endpoint
   // Displays a simple message to the user
-  app.get( "/", async ( req, res ) => {
+  app.get( "/", async ( req: Request, res: Response) => {
     res.send("try GET /filteredimage?image_url={{}}")
   } );
   
+  function requireAuth(req: Request, res: Response, next: NextFunction) {
+    if (!req.headers || !req.headers.authorization){
+        return res.status(401).send({ message: 'No authorization headers.' });
+    }
+    
+    const token_bearer = req.headers.authorization.split(' ');
+    if(token_bearer.length != 2){
+        return res.status(401).send({ message: 'Malformed token.' });
+    }
+    
+    const token = token_bearer[1];
+
+    return jwt.verify(token, config.jwt.secret, (err, decoded) => {
+      if (err) {
+        return res.status(500).send({ auth: false, message: 'Failed to authenticate.' });
+      }
+      return next();
+    });
+}
+
 
   // Start the Server
   app.listen( port, () => {
